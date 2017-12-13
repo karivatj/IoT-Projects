@@ -1,0 +1,1 @@
+A device made with Raspberry Pi Zero W that is able to reserve a designated meetingroom with just a push of a button. This is the source code that operates the device
