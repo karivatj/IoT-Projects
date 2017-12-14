@@ -251,7 +251,7 @@ def check_availability():
                 logger.debug("Meeting room is marked as reserved by rule #2")
                 reserved = True
                 break
-            if (now_rounded_down >= start_date and now_rounded_down <= end_date) and now_rounded_up >= end_date:
+            if (now_rounded_down >= start_date and now_rounded_down < end_date) and now_rounded_up >= end_date:
                 logger.debug("Meeting room is marked as reserved by rule #3")
                 reserved = True
                 break
