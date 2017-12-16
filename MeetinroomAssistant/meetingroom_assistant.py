@@ -115,10 +115,10 @@ sample_appointment_request = '''<?xml version="1.0" encoding="UTF-8"?>
 
 # date format: 2006-11-02T15:00:00
 
-target_calendar = ''
-username = ''
-password = ''
-server   = ''
+target_calendar = "RES_L3TestLab@ppshp.fi"
+username = 'OYSNET\\TestLab_Res'
+password = 'CP3525dn%4x4'
+server   = "https://sposti.ppshp.fi/EWS/Exchange.asmx"
 
 # callback functions
 def button_pressed():
@@ -251,7 +251,7 @@ def check_availability():
                 logger.debug("Meeting room is marked as reserved by rule #2")
                 reserved = True
                 break
-            if (now_rounded_down >= start_date and now_rounded_down < end_date) and now_rounded_up >= end_date:
+            if (now_rounded_down > start_date and now_rounded_down < end_date) and now_rounded_up >= end_date:
                 logger.debug("Meeting room is marked as reserved by rule #3")
                 reserved = True
                 break
