@@ -99,3 +99,6 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# access tokens
+./MeetinroomAssistant/access_tokens.py
