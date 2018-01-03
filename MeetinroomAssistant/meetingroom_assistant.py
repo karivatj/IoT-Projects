@@ -18,6 +18,7 @@ from dateutil.parser import parse
 from requests_ntlm import HttpNtlmAuth
 from xml.etree import ElementTree
 from message_templates import *
+from access_tokens import *
 
 # setup logging
 # create logger with 'ipost_converter'
