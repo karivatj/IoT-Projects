@@ -17,6 +17,7 @@ import traceback
 from dateutil.parser import parse
 from requests_ntlm import HttpNtlmAuth
 from xml.etree import ElementTree
+from message_templates import *
 
 # setup logging
 # create logger with 'ipost_converter'
@@ -39,7 +40,7 @@ logger.addHandler(ch)
 #content-type header must be this or server responds with 451
 headers = {'Content-Type': 'text/xml; charset=utf-8'} # set what your server accepts
 
-#date format
+# date format: 2006-11-02T15:00:00
 time_format = "%Y-%m-%d"
 time_format_full = "%Y-%m-%dT%H:%M:%S"
 
@@ -48,81 +49,16 @@ blue_led = None
 red_led = None
 green_led = None
 
-#Sample message used to query calendar data. Remember to replace relevant parts of this message
-sample_getcalendar_request = '''<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-    xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
-    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-   <soap:Header>
-      <t:RequestServerVersion Version="Exchange2010_SP2" />
-   </soap:Header>
-   <soap:Body>
-      <m:FindItem Traversal="Shallow">
-         <m:ItemShape>
-            <t:BaseShape>IdOnly</t:BaseShape>
-            <t:AdditionalProperties>
-               <t:FieldURI FieldURI="item:Subject" />
-               <t:FieldURI FieldURI="calendar:Start" />
-               <t:FieldURI FieldURI="calendar:End" />
-            </t:AdditionalProperties>
-         </m:ItemShape>
-         <m:CalendarView MaxEntriesReturned="10" StartDate="!Start_Date!" EndDate="!End_Date!" />
-         <m:ParentFolderIds>
-            <t:DistinguishedFolderId Id="calendar">
-               <t:Mailbox>
-                  <t:EmailAddress>!Replace_Email_Of_Calendar!</t:EmailAddress>
-               </t:Mailbox>
-            </t:DistinguishedFolderId>
-         </m:ParentFolderIds>
-      </m:FindItem>
-   </soap:Body>
-</soap:Envelope>'''
-
-#Sample message used to make an appointment to the designated calendar. Remember to replace relevant parts of this message
-sample_appointment_request = '''<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-   <soap:Body>
-      <CreateItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" SendMeetingInvitations="SendToAllAndSaveCopy">
-         <SavedItemFolderId>
-            <t:DistinguishedFolderId Id="calendar" />
-         </SavedItemFolderId>
-         <Items>
-            <t:CalendarItem xmlns="http://schemas.microsoft.com/exchange/services/2006/types">
-               <Subject>Pikapalaveri</Subject>
-               <Body BodyType="Text">Pikavaraus tehty Karin laitteen avustuksella.</Body>
-               <ReminderIsSet>false</ReminderIsSet>
-               <ReminderMinutesBeforeStart>60</ReminderMinutesBeforeStart>
-               <Start>!Start_Date!</Start>
-               <End>!End_Date!</End>
-               <IsAllDayEvent>false</IsAllDayEvent>
-               <LegacyFreeBusyStatus>Busy</LegacyFreeBusyStatus>
-               <Location>OYS TestLab</Location>
-               <RequiredAttendees>
-                  <Attendee>
-                     <Mailbox>
-                        <EmailAddress>!Replace_Email_Of_Calendar!</EmailAddress>
-                     </Mailbox>
-                  </Attendee>
-               </RequiredAttendees>
-            </t:CalendarItem>
-         </Items>
-      </CreateItem>
-   </soap:Body>
-</soap:Envelope>'''
-
-# date format: 2006-11-02T15:00:00
-
-target_calendar = "RES_L3TestLab@ppshp.fi"
-username = 'OYSNET\\TestLab_Res'
-password = 'CP3525dn%4x4'
-server   = "https://sposti.ppshp.fi/EWS/Exchange.asmx"
+working = False
 
 # callback functions
-def button_pressed():
+def handle_button_press():
+    global working
+    if working:
+        return
+    else:
+        working = True
+
     logger.debug("Button pressed")
     if check_availability():
         if make_a_reservation():
@@ -130,11 +66,37 @@ def button_pressed():
             red_led.on()
             green_led.off()
     else:
+        notification_blink(2)
         red_led.on()
         green_led.off()
 
-def error_blink():
-    for i in range(0,8):
+    working = False
+
+def handle_button_hold():
+    global working
+    if working:
+        return
+    else:
+        working = True
+
+    clear_reservations()
+
+    working = False
+
+def notification_blink(num_of_times):
+    for i in range(0, num_of_times):
+        red_led.on()
+        green_led.on()
+        time.sleep(0.50)
+        red_led.off()
+        green_led.off()
+        time.sleep(0.50)
+
+    red_led.pulse()
+    green_led.pulse()
+
+def error_blink(num_of_times):
+    for i in range(0, num_of_times):
         red_led.off()
         green_led.on()
         time.sleep(0.20)
@@ -145,17 +107,81 @@ def error_blink():
     red_led.pulse()
     green_led.pulse()
 
-def button_release():
-    logger.debug("Button released")
+def get_appointments():
+    start_time = datetime.datetime.today().strftime(time_format) + "T00:00:00.000Z"
+    end_time = datetime.datetime.today().strftime(time_format) + "T23:59:59.999Z"
+
+    #Send a GetFolder request. Use Sample request as a template and replace necessary parts from it
+    message = sample_getcalendar_request.replace("!Replace_Email_Of_Calendar!", target_calendar)
+    message = message.replace("!Start_Date!", start_time)
+    message = message.replace("!End_Date!", end_time)
+
+    try:
+        logger.debug("Fetching data from " + server)
+        response = requests.post(server, data=message, headers=headers, auth=HttpNtlmAuth(username, password), verify=certifi.where())
+    except requests.exceptions.ConnectionError as e:
+        logger.error("Connection error ({0})".format(e))
+        error_blink(8)
+        return None
+
+    return response
+
+def parse_appointments(response):
+    tree = ElementTree.fromstring(response.content)
+    today = datetime.datetime.now()
+    data = {}
+    data[target_calendar] = []
+    timedelta = 2
+
+    logger.info(response.content)
+
+    if today > datetime.datetime(datetime.date.today().year, 3, 26, 3, 0, 0) and today < datetime.datetime(datetime.date.today().year, 10, 29, 4, 0, 0):
+        timedelta = 3
+
+    for elem in tree.iter(tag='{http://schemas.microsoft.com/exchange/services/2006/types}CalendarItem'):
+        for child in elem:
+            if("ItemId" in child.tag):
+                data[target_calendar].append(child.attrib["Id"])
+                data[target_calendar].append(child.attrib["ChangeKey"])
+            if("Subject" in child.tag):
+                data[target_calendar].append(child.text)
+            elif("Start" in child.tag):
+                date = parse(child.text)
+                date = date + datetime.timedelta(hours=timedelta) #add timedifference
+                data[target_calendar].append(date.strftime("%H:%M"))
+            elif("End" in child.tag):
+                date = parse(child.text)
+                date = date + datetime.timedelta(hours=timedelta) #add timedifference
+                data[target_calendar].append(date.strftime("%H:%M"))
+    return data
+
+def delete_appointment(itemid):
+    pass
+    '''
+    message = sample_delete_request.replace("!Replace_ItemId!", itemid)
+
+    try:
+        logger.debug("Sending an Appointment Delete request to " + server)
+        response = requests.post(server, data=message, headers=headers, auth=HttpNtlmAuth(username, password), verify=certifi.where())
+    except requests.exceptions.ConnectionError as e:
+        logger.error("Connection error ({0})".format(e))
+        error_blink(8)
+        return False
+
+    if(response.status_code != 200):
+        logger.error("Connection error. Status Code: {0}. Error: {1}".format(response.status_code, response.content))
+        error_blink(8)
+        return False
+    else:
+        logger.debug("Response OK. Apppointment deleted! {0}".format(response.content))
+        return True
+    '''
 
 def make_a_reservation():
     logger.info("Trying to make a reservation for 15 minutes")
     now = datetime.datetime.now().replace(second=0, microsecond=0)
     nowplus15 = now + datetime.timedelta(minutes=15)
 
-    #now = datetime.datetime.now()
-    #now_rounded_down = now - datetime.timedelta(minutes = now.minute % 15, seconds = now.second, microseconds = now.microsecond) # round to nearest quarter
-    #now_rounded_up = now_rounded_down + datetime.timedelta(minutes = 15)
     start_time = now.strftime(time_format_full)
     end_time = nowplus15.strftime(time_format_full)
 
@@ -169,16 +195,40 @@ def make_a_reservation():
         response = requests.post(server, data=message, headers=headers, auth=HttpNtlmAuth(username, password), verify=certifi.where())
     except requests.exceptions.ConnectionError as e:
         logger.error("Connection error ({0})".format(e))
-        error_blink()
+        error_blink(8)
         return False
 
     if(response.status_code != 200):
-        logger.error("Connection error. Status Code: {0}".format(response.status_code))
-        error_blink()
+        logger.error("Connection error. Status Code: {0}. Error: {1}".format(response.status_code, response.content))
+        error_blink(8)
         return False
     else:
-        logger.debug("Response OK. Apppointment set!")
+        logger.debug("Response OK. Apppointment set! {0}".format(response.content))
         return True
+
+def clear_reservations():
+    logger.info("Clearing appointments made by the device")
+
+    red_led.pulse()
+    green_led.pulse()
+
+    response = get_appointments()
+
+    if(response.status_code != 200):
+        logger.error("Connection error. Status Code: {0}".format(response.status_code))
+        error_blink(8)
+        return
+    else:
+        logger.debug("Response OK. Parsing data...")
+        calendar_data = parse_appointments(response)
+
+        for calendar in calendar_data:
+            for item in range(0, len(calendar_data[calendar]), 5):
+                if(calendar_data[calendar][item+2] in "Ad-hoc varaus"):
+                    itemid = calendar_data[calendar][item]
+                    changekey = calendar_data[calendar][item+1]
+                    logger.info("Deleting itemid {0}".format(itemid))
+                    delete_appointment(itemid)
 
 def check_availability():
     logger.debug("Checking reservation status for {0}".format(target_calendar))
@@ -186,92 +236,50 @@ def check_availability():
     red_led.pulse()
     green_led.pulse()
 
-    calendar_data = {} #dictionary containing the data
-    calendar_data[target_calendar] = []
-
-    start_time = datetime.datetime.today().strftime(time_format) + "T00:00:00.000Z"
-    end_time = datetime.datetime.today().strftime(time_format) + "T23:59:59.999Z"
-
-    #Send a GetFolder request. Use Sample request as a template and replace necessary parts from it
-    message = sample_getcalendar_request.replace("!Replace_Email_Of_Calendar!", target_calendar)
-    message = message.replace("!Start_Date!", start_time)
-    message = message.replace("!End_Date!", end_time)
-
-    try:
-        logger.debug("Fetching data from " + server)
-        response = requests.post(server, data=message, headers=headers, auth=HttpNtlmAuth(username, password), verify=certifi.where())
-    except requests.exceptions.ConnectionError as e:
-        logger.error("Connection error ({0})".format(e))
-        error_blink()
-        return
+    reserved = False
+    response = get_appointments()
 
     if(response.status_code != 200):
         logger.error("Connection error. Status Code: {0}".format(response.status_code))
-        error_blink()
+        error_blink(8)
         return
     else:
         logger.debug("Response OK. Parsing data...")
-        tree = ElementTree.fromstring(response.content)
-        today = datetime.datetime.now()
-        timedelta = 2
+        calendar_data = parse_appointments(response)
 
-        if today > datetime.datetime(datetime.date.today().year, 3, 26, 3, 0, 0) and today < datetime.datetime(datetime.date.today().year, 10, 29, 4, 0, 0):
-            timedelta = 3
+        now = datetime.datetime.now().replace(second=0, microsecond=0)
+        nowplus15 = now + datetime.timedelta(minutes=15)
 
-        for elem in tree.iter(tag='{http://schemas.microsoft.com/exchange/services/2006/types}CalendarItem'):
-            for child in elem:
-                if("Subject" in child.tag):
-                    logger.info(child.text)
-                    calendar_data[target_calendar].append(child.text)
-                elif("Start" in child.tag):
-                    date = parse(child.text)
-                    date = date + datetime.timedelta(hours=timedelta) #add timedifference
-                    logger.info(date)
-                    calendar_data[target_calendar].append(date.strftime("%H:%M"))
-                elif("End" in child.tag):
-                    date = parse(child.text)
-                    date = date + datetime.timedelta(hours=timedelta) #add timedifference
-                    logger.info(date)
-                    calendar_data[target_calendar].append(date.strftime("%H:%M"))
+        calendar_data = collections.OrderedDict(sorted(calendar_data.items(), key=lambda t: t[0]))
 
-    now = datetime.datetime.now().replace(second=0, microsecond=0)
-    nowplus15 = now + datetime.timedelta(minutes=15)
+        for calendar in calendar_data:
+            for item in range(0, len(calendar_data[calendar]), 5):
+                start_date = parse(calendar_data[calendar][item+3])
+                end_date = parse(calendar_data[calendar][item+4])
 
-    #now_rounded_down = now - datetime.timedelta(minutes = now.minute % 15, seconds = now.second, microseconds = now.microsecond) # round to nearest quarter
-    #now_rounded_up = now_rounded_down + datetime.timedelta(minutes = 15)
+                # the 15 minute timeslot has to pass a few rules before it can be reserved
+                if now >= start_date and nowplus15 <= end_date:
+                    logger.debug("Meeting room is marked as reserved by rule #1")
+                    reserved = True
+                    break
+                if now <= start_date and (nowplus15 >= (start_date -  datetime.timedelta(minutes=5)) and nowplus15 <= end_date):
+                    logger.debug("Meeting room is marked as reserved by rule #2")
+                    reserved = True
+                    break
+                if (now > start_date and now < end_date) and nowplus15 >= end_date:
+                    logger.debug("Meeting room is marked as reserved by rule #3")
+                    reserved = True
+                    break
 
-    calendar_data = collections.OrderedDict(sorted(calendar_data.items(), key=lambda t: t[0]))
+        # sleep a couple of seconds just so the progress is not too fast and the user manages to notice something is happening
+        time.sleep(2)
 
-    reserved = False
-
-    for calendar in calendar_data:
-        for item in range(0, len(calendar_data[calendar]), 3):
-            start_date = parse(calendar_data[calendar][item+1])
-            end_date = parse(calendar_data[calendar][item+2])
-
-            # the 15 minute timeslot has to pass a few rules before it can be reserved
-            if now >= start_date and nowplus15 <= end_date:
-                logger.debug("Meeting room is marked as reserved by rule #1")
-                reserved = True
-                break
-            if now <= start_date and (nowplus15 >= (start_date -  datetime.timedelta(minutes=5)) and nowplus15 <= end_date):
-                logger.debug("Meeting room is marked as reserved by rule #2")
-                reserved = True
-                break
-            if (now > start_date and now < end_date) and nowplus15 >= end_date:
-                logger.debug("Meeting room is marked as reserved by rule #3")
-                reserved = True
-                break
-
-    # sleep a couple of seconds just so the progress is not too fast and the user manages to notice something is happening
-    time.sleep(2)
-
-    if reserved:
-        logger.info("Meeting room reserved at the moment!")
-        return False
-    else:
-        logger.info("Meeting room free at the moment!")
-        return True
+        if reserved:
+            logger.info("Meeting room reserved at the moment!")
+            return False
+        else:
+            logger.info("Meeting room free at the moment!")
+            return True
 
 def poll_availability():
     polling_worker()
@@ -284,87 +292,49 @@ def polling_worker():
     calendar_data = {} #dictionary containing the data
     calendar_data[target_calendar] = []
 
-    start_time = datetime.datetime.today().strftime(time_format) + "T00:00:00.000Z"
-    end_time = datetime.datetime.today().strftime(time_format) + "T23:59:59.999Z"
+    reserved = False
 
-    #Send a GetFolder request. Use Sample request as a template and replace necessary parts from it
-    message = sample_getcalendar_request.replace("!Replace_Email_Of_Calendar!", target_calendar)
-    message = message.replace("!Start_Date!", start_time)
-    message = message.replace("!End_Date!", end_time)
-
-    try:
-        logger.debug("Fetching data from " + server)
-        response = requests.post(server, data=message, headers=headers, auth=HttpNtlmAuth(username, password), verify=certifi.where())
-    except requests.exceptions.ConnectionError as e:
-        logger.error("Connection error ({0})".format(e))
-        error_blink()
-        return
+    response = get_appointments()
 
     if(response.status_code != 200):
         logger.error("Connection error. Status Code: {0}".format(response.status_code))
-        error_blink()
+        error_blink(8)
         return
     else:
-        tree = ElementTree.fromstring(response.content)
-        today = datetime.datetime.now()
-        timedelta = 2
+        calendar_data = parse_appointments(response)
 
-        if today > datetime.datetime(datetime.date.today().year, 3, 26, 3, 0, 0) and today < datetime.datetime(datetime.date.today().year, 10, 29, 4, 0, 0):
-            timedelta = 3
+        now = datetime.datetime.now().replace(second=0, microsecond=0)
+        nowplus15 = now + datetime.timedelta(minutes=15)
 
-        for elem in tree.iter(tag='{http://schemas.microsoft.com/exchange/services/2006/types}CalendarItem'):
-            for child in elem:
-                if("Subject" in child.tag):
-                    logger.info(child.text)
-                    calendar_data[target_calendar].append(child.text)
-                elif("Start" in child.tag):
-                    date = parse(child.text)
-                    date = date + datetime.timedelta(hours=timedelta) #add timedifference
-                    logger.info(date)
-                    calendar_data[target_calendar].append(date.strftime("%H:%M"))
-                elif("End" in child.tag):
-                    date = parse(child.text)
-                    date = date + datetime.timedelta(hours=timedelta) #add timedifference
-                    logger.info(date)
-                    calendar_data[target_calendar].append(date.strftime("%H:%M"))
+        calendar_data = collections.OrderedDict(sorted(calendar_data.items(), key=lambda t: t[0]))
 
-    now = datetime.datetime.now().replace(second=0, microsecond=0)
-    nowplus15 = now + datetime.timedelta(minutes=15)
+        for calendar in calendar_data:
+            for item in range(0, len(calendar_data[calendar]), 5):
+                start_date = parse(calendar_data[calendar][item+3])
+                end_date = parse(calendar_data[calendar][item+4])
 
-    #now_rounded_down = now - datetime.timedelta(minutes = now.minute % 15, seconds = now.second, microseconds = now.microsecond) # round to nearest quarter
-    #now_rounded_up = now_rounded_down + datetime.timedelta(minutes = 15)
+                # the 15 minute timeslot has to pass a few rules before it can be reserved
+                if now >= start_date and nowplus15 <= end_date:
+                    logger.debug("Meeting room is marked as reserved by rule #1")
+                    reserved = True
+                    break
+                if now <= start_date and (nowplus15 > start_date and nowplus15 <= end_date):
+                    logger.debug("Meeting room is marked as reserved by rule #2")
+                    reserved = True
+                    break
+                if (now > start_date and now < end_date) and nowplus15 >= end_date:
+                    logger.debug("Meeting room is marked as reserved by rule #3")
+                    reserved = True
+                    break
 
-    calendar_data = collections.OrderedDict(sorted(calendar_data.items(), key=lambda t: t[0]))
-
-    reserved = False
-
-    for calendar in calendar_data:
-        for item in range(0, len(calendar_data[calendar]), 3):
-            start_date = parse(calendar_data[calendar][item+1])
-            end_date = parse(calendar_data[calendar][item+2])
-
-            # the 15 minute timeslot has to pass a few rules before it can be reserved
-            if now >= start_date and nowplus15 <= end_date:
-                logger.debug("Meeting room is marked as reserved by rule #1")
-                reserved = True
-                break
-            if now <= start_date and (nowplus15 > start_date and nowplus15 <= end_date):
-                logger.debug("Meeting room is marked as reserved by rule #2")
-                reserved = True
-                break
-            if (now > start_date and now < end_date) and nowplus15 >= end_date:
-                logger.debug("Meeting room is marked as reserved by rule #3")
-                reserved = True
-                break
-
-    if reserved:
-        logger.info("Meeting room reserved at the moment!")
-        red_led.on()
-        green_led.off()
-    else:
-        logger.info("Meeting room free at the moment!")
-        red_led.off()
-        green_led.on()
+        if reserved:
+            logger.info("Meeting room reserved at the moment!")
+            red_led.on()
+            green_led.off()
+        else:
+            logger.info("Meeting room free at the moment!")
+            red_led.off()
+            green_led.on()
 
 if __name__=="__main__":
     try:
@@ -381,7 +351,9 @@ if __name__=="__main__":
         green_led.pulse()
 
         button = Button(27)
-        button.when_pressed = button_pressed
+        button.when_released = handle_button_press
+        button.hold_time = 5
+        button.when_held = handle_button_hold
 
         poll_availability()
 
