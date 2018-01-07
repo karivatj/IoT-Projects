@@ -2,35 +2,23 @@
 # -*- coding: utf-8 -*-
 
 # import libraries
-from gpiozero import PWMLED, LED, Button
+from gpiozero import PWMLED, Button
 import time
-import sys
 import threading
 import logging
-import certifi
-import requests
-import collections
-import codecs
-import traceback
+import schedule
 
 from datetime import timedelta
-from dateutil.parser import parse
-from requests_ntlm import HttpNtlmAuth
-from xml.etree import ElementTree
-from message_templates import *
+from exchangelib import EWSDateTime, EWSTimeZone, CalendarItem
+from access_tokens import account
 
-from exchangelib import DELEGATE, Account, Credentials, EWSDateTime, EWSTimeZone, \
-    Configuration, NTLM, CalendarItem, \
-    Mailbox, Attendee, Q, \
-    HTMLBody, Build, Version
-
-from access_tokens import credentials, config, account
+# define the timezone
+tz = EWSTimeZone.timezone('Europe/Helsinki')
 
 # setup logging
-# create logger with 'ipost_converter'
 logger = logging.getLogger('naurunappula')
 logger.setLevel(logging.DEBUG)
-# create file handler which logs even debug messages
+# create file handler which logs debug messages
 fh = logging.FileHandler('debug.log')
 fh.setLevel(logging.DEBUG)
 # create console handler with a higher log level
@@ -44,14 +32,7 @@ ch.setFormatter(formatter)
 logger.addHandler(fh)
 logger.addHandler(ch)
 
-#content-type header must be this or server responds with 451
-headers = {'Content-Type': 'text/xml; charset=utf-8'} # set what your server accepts
-
-# date format: 2006-11-02T15:00:00
-time_format = "%Y-%m-%d"
-time_format_full = "%Y-%m-%dT%H:%M:%S"
-
-# components
+# hw components
 blue_led = None
 red_led = None
 green_led = None
@@ -121,7 +102,6 @@ def error_blink(num_of_times):
     green_led.pulse()
 
 def get_appointments():
-    tz = EWSTimeZone.timezone('Europe/Helsinki')
     now = tz.localize(EWSDateTime.now())
 
     items = account.calendar.filter(
@@ -133,7 +113,6 @@ def get_appointments():
 
 def make_a_reservation():
     logger.info("Trying to make a reservation for 15 minutes.")
-    tz = EWSTimeZone.timezone('Europe/Helsinki')
     now = tz.localize(EWSDateTime.now())
 
     start_time = tz.localize(EWSDateTime(now.year, now.month, now.day, now.hour, now.minute, 0, 0))
@@ -160,7 +139,12 @@ def clear_reservations():
         for app in appointments:
             if "Ad-hoc" in app.subject and "Naurunappula" in app.body:
                 logger.info("Cancelling an appointment named {0} at {1} - {2}".format(app.subject, app.start, app.end))
-                app.delete()
+                try:
+                    app.delete()
+                except Exception as e:
+                    logger.error("Couldn't delete the appointment: {0}".format(e))
+                    error_blink(4)
+                    pass
     else:
         logger.info("No appointments to cancel.")
 
@@ -172,74 +156,43 @@ def check_availability():
     red_led.pulse()
     green_led.pulse()
 
-    reserved = False
-
-    tz = EWSTimeZone.timezone('Europe/Helsinki')
-    now = tz.localize(EWSDateTime.now())
-    nowplus15 = now + timedelta(minutes=15)
-
-    appointments = get_appointments()
-
-    if(len(appointments) > 0):
-        for app in appointments:
-            # the 15 minute timeslot has to pass a few rules before it can be reserved
-            if now >= app.start and nowplus15 <= app.start:
-                logger.debug("Meeting room is marked as reserved by rule #1")
-                reserved = True
-                break
-            if now <= app.start and (nowplus15 >= (app.start -  timedelta(minutes=5)) and nowplus15 <= app.end):
-                logger.debug("Meeting room is marked as reserved by rule #2")
-                reserved = True
-                break
-            if (now > app.start and now < app.end) and nowplus15 >= app.end:
-                logger.debug("Meeting room is marked as reserved by rule #3")
-                reserved = True
-                break
-
     # sleep a couple of seconds just so the progress is not too fast and the user manages to notice something is happening
     time.sleep(2)
 
-    if reserved:
-        logger.info("Meeting room reserved at the moment!")
-        return False
-    else:
-        logger.info("Meeting room free at the moment!")
-        return True
+    return verify_availability(get_appointments())
 
-def poll_availability():
-    polling_worker()
-    threading.Timer(60, poll_availability).start()
-
-def polling_worker():
-    logger.debug("Polling reservation status for {0}".format(account.primary_smtp_address))
-
-    reserved = False
-
-    tz = EWSTimeZone.timezone('Europe/Helsinki')
+def verify_availability(appointments):
+    available = True
     now = tz.localize(EWSDateTime.now())
     nowplus15 = now + timedelta(minutes=15)
 
-    logger.debug("Getting appointments for today.")
-    appointments = get_appointments()
-    logger.debug("Appointments fetched. Checking availability.")
+    for app in appointments:
+        # the 15 minute timeslot has to pass a few rules before it can be reserved
+        if now >= app.start and nowplus15 <= app.start:
+            logger.debug("Meeting room is marked as reserved by rule #1")
+            available = False
+            break
+        if now <= app.start and (nowplus15 >= (app.start - timedelta(minutes=5)) and nowplus15 <= app.end):
+            logger.debug("Meeting room is marked as reserved by rule #2")
+            available = False
+            break
+        if (now > app.start and now < app.end) and nowplus15 >= app.end:
+            logger.debug("Meeting room is marked as reserved by rule #3")
+            available = False
+            break
 
-    if(len(appointments) > 0):
-        for app in appointments:
-            # the 15 minute timeslot has to pass a few rules before it can be reserved
-            if now >= app.start and nowplus15 <= app.start:
-                logger.debug("Meeting room is marked as reserved by rule #1")
-                reserved = True
-                break
-            if now <= app.start and (nowplus15 >= (app.start - timedelta(minutes=5)) and nowplus15 <= app.end):
-                logger.debug("Meeting room is marked as reserved by rule #2")
-                reserved = True
-                break
-            if (now > app.start and now < app.end) and nowplus15 >= app.end:
-                logger.debug("Meeting room is marked as reserved by rule #3")
-                reserved = True
-                break
+    return available    
 
-    if reserved:
+def poll_availability():
+
+    logger.debug("Polling reservation status for {0}".format(account.primary_smtp_address))
+
+    available = True
+
+    logger.debug("Getting appointments for today and checking availability.")
+    available = verify_availability(get_appointments())
+
+    if not available:
         logger.info("Meeting room reserved at the moment!")
         red_led.on()
         green_led.off()
@@ -267,15 +220,17 @@ if __name__=="__main__":
         button.hold_time = 5
         button.when_held = handle_button_hold
 
-        poll_availability()
+        schedule.every(1).minutes.do(poll_availability)
 
         while True:
             try:
+                schedule.run_pending()
                 time.sleep(1)
             except KeyboardInterrupt:
                 break
     finally:
         logger.debug("Exiting...")
+        schedule.clear()        
         blue_led.off()
         red_led.off()
         green_led.off()
