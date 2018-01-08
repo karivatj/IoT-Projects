@@ -151,7 +151,7 @@ def clear_reservations():
     time.sleep(2) # sleep for a while to give the user the sense of progress
 
 def check_availability():
-    logger.debug("Checking reservation status for {0}".format(account.primary_smtp_address))
+    logger.info("Checking reservation status for {0}".format(account.primary_smtp_address))
 
     red_led.pulse()
     green_led.pulse()
@@ -181,15 +181,14 @@ def verify_availability(appointments):
             available = False
             break
 
-    return available    
+    return available
 
 def poll_availability():
-
-    logger.debug("Polling reservation status for {0}".format(account.primary_smtp_address))
+    logger.info("Polling reservation status for {0}".format(account.primary_smtp_address))
 
     available = True
 
-    logger.debug("Getting appointments for today and checking availability.")
+    logger.info("Getting appointments for today and checking availability.")
     available = verify_availability(get_appointments())
 
     if not available:
@@ -203,7 +202,7 @@ def poll_availability():
 
 if __name__=="__main__":
     try:
-        logger.debug("Starting up the experiment...")
+        logger.info("Starting up the experiment...")
 
         # setup pins
         blue_led = PWMLED(22)   # used as a status indicator
@@ -220,6 +219,10 @@ if __name__=="__main__":
         button.hold_time = 5
         button.when_held = handle_button_hold
 
+        # check initial reservation status
+        poll_availability()
+
+        # schedule the status check to be run every minute
         schedule.every(1).minutes.do(poll_availability)
 
         while True:
@@ -230,7 +233,7 @@ if __name__=="__main__":
                 break
     finally:
         logger.debug("Exiting...")
-        schedule.clear()        
+        schedule.clear()
         blue_led.off()
         red_led.off()
         green_led.off()
