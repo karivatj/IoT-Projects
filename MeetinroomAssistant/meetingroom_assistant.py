@@ -103,11 +103,16 @@ def error_blink(num_of_times):
 
 def get_appointments():
     now = tz.localize(EWSDateTime.now())
-
-    items = account.calendar.filter(
-        start__gt=tz.localize(EWSDateTime(now.year, now.month, now.day, 0, 0)),
-        end__lt=tz.localize(EWSDateTime(now.year, now.month, now.day, 23, 59)),
-    )
+    items = {}
+    try:
+        items = account.calendar.filter(
+            start__gt=tz.localize(EWSDateTime(now.year, now.month, now.day, 0, 0)),
+            end__lt=tz.localize(EWSDateTime(now.year, now.month, now.day, 23, 59)),
+        )
+        logger.info("Appointments fetched")
+    except Exception as e:
+        logger.error("Failed to get appointments. Trying again later. Error: {0}".format(e))
+        return items
 
     return items
 
@@ -158,28 +163,32 @@ def check_availability():
 
     # sleep a couple of seconds just so the progress is not too fast and the user manages to notice something is happening
     time.sleep(2)
-
-    return verify_availability(get_appointments())
+    appointments = get_appointments()
+    return verify_availability(appointments)
 
 def verify_availability(appointments):
     available = True
     now = tz.localize(EWSDateTime.now())
     nowplus15 = now + timedelta(minutes=15)
 
-    for app in appointments:
-        # the 15 minute timeslot has to pass a few rules before it can be reserved
-        if now >= app.start and nowplus15 <= app.start:
-            logger.debug("Meeting room is marked as reserved by rule #1")
-            available = False
-            break
-        if now <= app.start and (nowplus15 >= (app.start - timedelta(minutes=5)) and nowplus15 <= app.end):
-            logger.debug("Meeting room is marked as reserved by rule #2")
-            available = False
-            break
-        if (now > app.start and now < app.end) and nowplus15 >= app.end:
-            logger.debug("Meeting room is marked as reserved by rule #3")
-            available = False
-            break
+    try:
+        for app in appointments:
+            # the 15 minute timeslot has to pass a few rules before it can be reserved
+            if now >= app.start and nowplus15 <= app.start:
+                logger.debug("Meeting room is marked as reserved by rule #1")
+                available = False
+                break
+            if now <= app.start and (nowplus15 >= (app.start - timedelta(minutes=5)) and nowplus15 <= app.end):
+                logger.debug("Meeting room is marked as reserved by rule #2")
+                available = False
+                break
+            if (now > app.start and now < app.end) and nowplus15 >= app.end:
+                logger.debug("Meeting room is marked as reserved by rule #3")
+                available = False
+                break
+    except Exception as e:
+        logger.error("Failed to parse appointments. Error: {0}".format(e))
+        error_blink(8)
 
     return available
 
@@ -189,7 +198,8 @@ def poll_availability():
     available = True
 
     logger.info("Getting appointments for today and checking availability.")
-    available = verify_availability(get_appointments())
+    appointments = get_appointments()
+    available = verify_availability(appointments)
 
     if not available:
         logger.info("Meeting room reserved at the moment!")
