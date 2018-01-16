@@ -39,27 +39,42 @@ green_led = None
 
 working = False
 
-# callback functions
-def handle_button_press():
+def handle_button_release():
     global working
     if working:
         return
     else:
-        logging.info("Reservation requested.")
         working = True
-        if check_availability():
-            if make_a_reservation(): # if the reservation was a success lets turn on the red light
+
+        now = time.time()
+        count = 1
+        minutes = 15
+        while time.time() < now + 1: # 1 second period
+            if button.is_pressed:
+                count +=1
+        if count == 1:
+            minutes = 15
+        else:
+            minutes = 30
+
+        if check_availability(minutes):
+            if make_a_reservation(minutes): # if the reservation was a success lets turn on the red light
                 red_led.on()
                 green_led.off()
-            else:
-                red_led.off()
-                green_led.on()
         else:
             notification_blink(2)
-            red_led.on()
-            green_led.off()
+            if minutes == 30:
+                if check_availability(15):
+                    red_led.off()
+                    green_led.on()
+                else:
+                    red_led.on()
+                    green_led.off()
+            else:
+                red_led.on()
+                green_led.off()
 
-    working = False
+        working = False
 
 def handle_button_hold():
     global working
@@ -68,7 +83,7 @@ def handle_button_hold():
     else:
         working = True
         clear_reservations()
-        if check_availability():
+        if check_availability(15):
             red_led.off()
             green_led.on()
         else:
@@ -104,24 +119,23 @@ def error_blink(num_of_times):
 def get_appointments():
     now = tz.localize(EWSDateTime.now())
     items = {}
+
     try:
-        items = account.calendar.filter(
-            start__gt=tz.localize(EWSDateTime(now.year, now.month, now.day, 0, 0)),
-            end__lt=tz.localize(EWSDateTime(now.year, now.month, now.day, 23, 59)),
-        )
-        logger.info("Appointments fetched")
+        items = account.calendar.view(
+            start=tz.localize(EWSDateTime(now.year, now.month, now.day, 6, 0)),
+            end=tz.localize(EWSDateTime(now.year, now.month, now.day, 18, 0)),
+        ).order_by('start')
     except Exception as e:
         logger.error("Failed to get appointments. Trying again later. Error: {0}".format(e))
-        return items
 
     return items
 
-def make_a_reservation():
-    logger.info("Trying to make a reservation for 15 minutes.")
+def make_a_reservation(timeslot):
+    logger.info("Trying to make a reservation for {0} minutes.".format(timeslot))
     now = tz.localize(EWSDateTime.now())
 
     start_time = tz.localize(EWSDateTime(now.year, now.month, now.day, now.hour, now.minute, 0, 0))
-    end_time = tz.localize(EWSDateTime(now.year, now.month, now.day, now.hour, now.minute, 0, 0) + timedelta(minutes=15))
+    end_time = tz.localize(EWSDateTime(now.year, now.month, now.day, now.hour, now.minute, 0, 0) + timedelta(minutes=timeslot))
     item = CalendarItem(folder=account.calendar, subject='Ad-hoc varaus', body='Made with Naurunappula at '+ str(now), start=start_time, end=end_time)
 
     try:
@@ -155,7 +169,7 @@ def clear_reservations():
 
     time.sleep(2) # sleep for a while to give the user the sense of progress
 
-def check_availability():
+def check_availability(timeslot):
     logger.info("Checking reservation status for {0}".format(account.primary_smtp_address))
 
     red_led.pulse()
@@ -164,31 +178,31 @@ def check_availability():
     # sleep a couple of seconds just so the progress is not too fast and the user manages to notice something is happening
     time.sleep(2)
     appointments = get_appointments()
-    return verify_availability(appointments)
+    return verify_availability(appointments, timeslot)
 
-def verify_availability(appointments):
+def verify_availability(appointments, timeslot):
     available = True
     now = tz.localize(EWSDateTime.now())
-    nowplus15 = now + timedelta(minutes=15)
+    nowplusdelta = now + timedelta(minutes=timeslot)
 
     try:
         for app in appointments:
-            # the 15 minute timeslot has to pass a few rules before it can be reserved
-            if now >= app.start and nowplus15 <= app.start:
+            # the timeslot has to pass a few rules before it can be reserved
+            if now >= app.start and now < app.end:
                 logger.debug("Meeting room is marked as reserved by rule #1")
                 available = False
                 break
-            if now <= app.start and (nowplus15 >= (app.start - timedelta(minutes=5)) and nowplus15 <= app.end):
+            if now >= app.start and nowplusdelta <= app.start:
                 logger.debug("Meeting room is marked as reserved by rule #2")
                 available = False
                 break
-            if (now > app.start and now < app.end) and nowplus15 >= app.end:
+            if now <= app.start and (nowplusdelta >= (app.start - timedelta(minutes=5)) and nowplusdelta <= app.end):
                 logger.debug("Meeting room is marked as reserved by rule #3")
                 available = False
                 break
     except Exception as e:
         logger.error("Failed to parse appointments. Error: {0}".format(e))
-        error_blink(8)
+        notification_blink(2)
 
     return available
 
@@ -199,7 +213,7 @@ def poll_availability():
 
     logger.info("Getting appointments for today and checking availability.")
     appointments = get_appointments()
-    available = verify_availability(appointments)
+    available = verify_availability(appointments, 15)
 
     if not available:
         logger.info("Meeting room reserved at the moment!")
@@ -225,7 +239,8 @@ if __name__=="__main__":
         green_led.pulse()
 
         button = Button(27)
-        button.when_released = handle_button_press
+        button.when_released = handle_button_release
+        button.when_pressed = None
         button.hold_time = 5
         button.when_held = handle_button_hold
 
