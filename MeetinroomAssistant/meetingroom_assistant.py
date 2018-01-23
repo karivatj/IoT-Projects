@@ -8,6 +8,8 @@ import threading
 import logging
 import schedule
 
+from pathlib import Path # used to resolve users home directory
+from logging import handlers
 from datetime import timedelta
 from exchangelib import EWSDateTime, EWSTimeZone, CalendarItem
 from access_tokens import account
@@ -19,7 +21,8 @@ tz = EWSTimeZone.timezone('Europe/Helsinki')
 logger = logging.getLogger('naurunappula')
 logger.setLevel(logging.DEBUG)
 # create file handler which logs debug messages
-fh = logging.FileHandler('debug.log')
+fh = handlers.TimedRotatingFileHandler(str(Path.home()) + '/logs/debug.log', when="d", interval=1, backupCount=7)
+
 fh.setLevel(logging.DEBUG)
 # create console handler with a higher log level
 ch = logging.StreamHandler()
@@ -172,37 +175,42 @@ def clear_reservations():
 def check_availability(timeslot):
     logger.info("Checking reservation status for {0}".format(account.primary_smtp_address))
 
+    available = False
+
     red_led.pulse()
     green_led.pulse()
 
     # sleep a couple of seconds just so the progress is not too fast and the user manages to notice something is happening
     time.sleep(2)
     appointments = get_appointments()
-    return verify_availability(appointments, timeslot)
+
+    try:
+        available = verify_availability(appointments, timeslot)
+    except Exception as e:
+        logger.error("Failed to parse appointments. Error: {0}".format(e))
+        notification_blink(2)
+
+    return available
 
 def verify_availability(appointments, timeslot):
     available = True
     now = tz.localize(EWSDateTime.now())
     nowplusdelta = now + timedelta(minutes=timeslot)
 
-    try:
-        for app in appointments:
-            # the timeslot has to pass a few rules before it can be reserved
-            if now >= app.start and now < app.end:
-                logger.debug("Meeting room is marked as reserved by rule #1")
-                available = False
-                break
-            if now >= app.start and nowplusdelta <= app.start:
-                logger.debug("Meeting room is marked as reserved by rule #2")
-                available = False
-                break
-            if now <= app.start and (nowplusdelta >= (app.start - timedelta(minutes=5)) and nowplusdelta <= app.end):
-                logger.debug("Meeting room is marked as reserved by rule #3")
-                available = False
-                break
-    except Exception as e:
-        logger.error("Failed to parse appointments. Error: {0}".format(e))
-        notification_blink(2)
+    for app in appointments:
+        # the timeslot has to pass a few rules before it can be reserved
+        if now >= app.start and now < app.end:
+            logger.debug("Meeting room is marked as reserved by rule #1")
+            available = False
+            break
+        if now >= app.start and nowplusdelta <= app.start:
+            logger.debug("Meeting room is marked as reserved by rule #2")
+            available = False
+            break
+        if now <= app.start and (nowplusdelta >= (app.start - timedelta(minutes=5)) and nowplusdelta <= app.end):
+            logger.debug("Meeting room is marked as reserved by rule #3")
+            available = False
+            break
 
     return available
 
@@ -213,7 +221,14 @@ def poll_availability():
 
     logger.info("Getting appointments for today and checking availability.")
     appointments = get_appointments()
-    available = verify_availability(appointments, 15)
+
+    try:
+        available = verify_availability(appointments, 15)
+    except Exception as e:
+        logger.error("Failed to parse appointments. Error: {0}".format(e))
+        notification_blink(2)
+        logger.error("Trying again in 10 seconds.")
+        threading.Timer(10, poll_availability).start()
 
     if not available:
         logger.info("Meeting room reserved at the moment!")
