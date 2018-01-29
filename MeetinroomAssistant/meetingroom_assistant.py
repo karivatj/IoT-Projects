@@ -218,6 +218,7 @@ def poll_availability():
     logger.info("Polling reservation status for {0}".format(account.primary_smtp_address))
 
     available = True
+    error = False
 
     logger.info("Getting appointments for today and checking availability.")
     appointments = get_appointments()
@@ -226,18 +227,23 @@ def poll_availability():
         available = verify_availability(appointments, 15)
     except Exception as e:
         logger.error("Failed to parse appointments. Error: {0}".format(e))
+        logger.error("Trying again in 5 seconds.")
         notification_blink(2)
-        logger.error("Trying again in 10 seconds.")
-        threading.Timer(10, poll_availability).start()
+        error = True
+        threading.Timer(5, poll_availability).start()
 
     if not available:
         logger.info("Meeting room reserved at the moment!")
         red_led.on()
         green_led.off()
     else:
-        logger.info("Meeting room free at the moment!")
-        red_led.off()
-        green_led.on()
+        if error:
+            red_led.pulse()
+            green_led.pulse()
+        else:
+            logger.info("Meeting room free at the moment!")
+            red_led.off()
+            green_led.on()
 
 if __name__=="__main__":
     try:
