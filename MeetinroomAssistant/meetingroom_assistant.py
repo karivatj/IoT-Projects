@@ -14,6 +14,10 @@ from datetime import timedelta
 from exchangelib import EWSDateTime, EWSTimeZone, CalendarItem
 from access_tokens import account
 
+# used for debug information
+#from exchangelib.util import PrettyXmlHandler
+#logging.basicConfig(level=logging.DEBUG, handlers=[PrettyXmlHandler()])
+
 # define the timezone
 tz = EWSTimeZone.timezone('Europe/Helsinki')
 
@@ -52,13 +56,24 @@ def handle_button_release():
         now = time.time()
         count = 1
         minutes = 15
-        while time.time() < now + 1: # 1 second period
+
+        red_led.pulse()
+        green_led.pulse()
+
+        while time.time() < now + 3: # 3 second period
             if button.is_pressed:
                 count +=1
+
         if count == 1:
             minutes = 15
-        else:
+        elif count == 2:
             minutes = 30
+        elif count == 3:
+            minutes = 45
+        else:
+            minutes = 60
+
+        logger.debug("User initiated reservation request")
 
         if check_availability(minutes):
             if make_a_reservation(minutes): # if the reservation was a success lets turn on the red light
@@ -66,7 +81,7 @@ def handle_button_release():
                 green_led.off()
         else:
             notification_blink(2)
-            if minutes == 30:
+            if minutes is not 15:
                 if check_availability(15):
                     red_led.off()
                     green_led.on()
@@ -262,7 +277,7 @@ if __name__=="__main__":
         button = Button(27)
         button.when_released = handle_button_release
         button.when_pressed = None
-        button.hold_time = 5
+        button.hold_time = 3
         button.when_held = handle_button_hold
 
         # check initial reservation status
