@@ -79,6 +79,10 @@ def handle_button_release():
             if make_a_reservation(minutes): # if the reservation was a success lets turn on the red light
                 red_led.on()
                 green_led.off()
+            else:
+                error_blink(5, 0.1)
+                red_led.off()
+                green_led.on()
         else:
             notification_blink(2)
             if minutes is not 15:
@@ -122,14 +126,14 @@ def notification_blink(num_of_times):
     red_led.pulse()
     green_led.pulse()
 
-def error_blink(num_of_times):
+def error_blink(num_of_times, speed=0.2):
     for i in range(0, num_of_times):
         red_led.off()
         green_led.on()
-        time.sleep(0.20)
+        time.sleep(speed)
         red_led.on()
         green_led.off()
-        time.sleep(0.20)
+        time.sleep(speed)
 
     red_led.pulse()
     green_led.pulse()
@@ -154,7 +158,7 @@ def make_a_reservation(timeslot):
 
     start_time = tz.localize(EWSDateTime(now.year, now.month, now.day, now.hour, now.minute, 0, 0))
     end_time = tz.localize(EWSDateTime(now.year, now.month, now.day, now.hour, now.minute, 0, 0) + timedelta(minutes=timeslot))
-    item = CalendarItem(folder=account.calendar, subject='Ad-hoc varaus', body='Made with Naurunappula at '+ str(now), start=start_time, end=end_time)
+    item = CalendarItem(folder=account.calendar, subject='Pikavaraus', body='Made with Naurunappula at '+ str(now), start=start_time, end=end_time)
 
     try:
         item.save()
