@@ -251,7 +251,7 @@ class Naurunappula(QtWidgets.QMainWindow, Ui_stackedUI):
                     self.uuid = str(fileInput.readline())
                 assert uuid.UUID(self.uuid).version == 4
                 logger.info("Device ID found {0}".format(self.uuid))
-            except Exception as e:
+            except Exception:
                 logger.error("Failed to read device ID! Check file permissions {0}".format(e))
                 sys.exit()
         else:
@@ -306,26 +306,27 @@ class Naurunappula(QtWidgets.QMainWindow, Ui_stackedUI):
         temp_pw = ""
         file = sys.path[0] + "/settings.dat"
         logger.info("Loading settings from file: {0}".format(file))
+        
         try:
             with open(file) as fileInput:
                 for line in fileInput:
                     content.append(line)
-
-            content[4] = content[4].strip()
-
-            # decode password
-            for c in content[4]:
-                temp_pw += chr(ord(c) - 5)
-
-            self.preferences["name"] = content[0].rstrip('\r\n')
-            self.preferences["email"] = content[1].rstrip('\r\n')
-            self.preferences["server"] = content[2].rstrip('\r\n')
-            self.preferences["username"] = content[3].rstrip('\r\n')
-            self.preferences["password"] = temp_pw
-            return True
-        except Exception as e:
+        except FileNotFoundError:
             logger.error("Failed to load configuration file: {0}".format(traceback.print_exc()))
             return False
+
+        content[4] = content[4].strip()
+
+        # decode password
+        for c in content[4]:
+            temp_pw += chr(ord(c) - 5)
+
+        self.preferences["name"] = content[0].rstrip('\r\n')
+        self.preferences["email"] = content[1].rstrip('\r\n')
+        self.preferences["server"] = content[2].rstrip('\r\n')
+        self.preferences["username"] = content[3].rstrip('\r\n')
+        self.preferences["password"] = temp_pw
+        return True
 
     def save_settings(self):
         """Save settings to file for ex. server address and credentials to access a given resource calendar"""
