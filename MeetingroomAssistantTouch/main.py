@@ -567,6 +567,12 @@ if __name__ == '__main__':
     QtGui.QFontDatabase.addApplicationFont(":fonts/BebasNeue Bold.ttf")
     QtGui.QFontDatabase.addApplicationFont(":fonts/BebasNeue Regular.ttf")
     myWindow = Naurunappula(None, None)
-    #myWindow.showFullScreen()
+
+    try:
+        if os.uname()[4][:3] == 'arm':
+            myWindow.showFullScreen() #if we are running on rpi, run the program fullscreen
+    except AttributeError: #attribute error is raised if we try to do this in windows
+        pass
+
     myWindow.show()
     app.exec_()
